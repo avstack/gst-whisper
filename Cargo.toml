@@ -1,0 +1,46 @@
+[package]
+name = "gst-whisper"
+version = "0.1.0"
+edition = "2021"
+authors = ["Jasper Hugo <jasper@avstack.io>"]
+description = "A GStreamer filter that performs speech-to-text using Whisper"
+repository = "https://github.com/avstack/gst-whisper"
+
+[dependencies]
+byte-slice-cast = { version = "1", default-features = false }
+gstreamer = { version = "0.20", default-features = false }
+gstreamer-audio = { version = "0.20", default-features = false }
+gstreamer-base = { version = "0.20", default-features = false }
+once_cell = { version = "1", default-features = false, features = ["std"] }
+ringbuf = { version = "0.3", default-features = false, features = ["std"] }
+webrtc-vad = { version = "0.4", default-features = false }
+whisper-rs = { version = "0.8", default-features = false }
+
+[dev-dependencies]
+gstreamer-check = { version = "0.20", default-features = false }
+
+[build-dependencies]
+gst-plugin-version-helper = { version = "0.7", default-features = false }
+
+[lib]
+name = "gstwhisper"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[features]
+static = []
+capi = []
+doc = ["gstreamer/v1_22"]
+
+[package.metadata.capi]
+min_version = "0.8.0"
+
+[package.metadata.capi.header]
+enabled = false
+
+[package.metadata.capi.library]
+install_subdir = "gstreamer-1.0"
+versioning = false
+
+[package.metadata.capi.pkg_config]
+requires_private = "gstreamer-1.0, gstreamer-base-1.0, gstreamer-audio-1.0, gobject-2.0, glib-2.0, gmodule-2.0"
