@@ -1,19 +1,36 @@
-use std::{env, iter, mem::MaybeUninit, sync::{Arc, atomic::{AtomicBool, Ordering}, mpsc, Mutex}, thread, time::Instant};
+use std::{
+  env, iter,
+  mem::MaybeUninit,
+  sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc, Mutex,
+  },
+  thread,
+  time::Instant,
+};
 
 use byte_slice_cast::AsSliceOf;
-use gstreamer::glib::{self, ParamSpec, ParamSpecBoolean, SignalHandlerId, Value};
 use gstreamer::{
-  element_imp_error, loggable_error,
+  element_imp_error,
+  glib::{self, ParamSpec, ParamSpecBoolean, SignalHandlerId, Value},
+  loggable_error,
   param_spec::GstParamSpecBuilderExt,
-  prelude::{Cast, ElementExt, GstBinExt, GstObjectExt, ObjectExt, PadExt, ParamSpecBuilderExt, ToValue},
+  prelude::{
+    Cast, ElementExt, GstBinExt, GstObjectExt, ObjectExt, PadExt, ParamSpecBuilderExt, ToValue,
+  },
   subclass::{
-    prelude::{ElementImpl, ElementImplExt, GstObjectImpl, ObjectImpl, ObjectSubclass, ObjectSubclassExt},
+    prelude::{
+      ElementImpl, ElementImplExt, GstObjectImpl, ObjectImpl, ObjectSubclass, ObjectSubclassExt,
+    },
     ElementMetadata,
   },
   Buffer, BufferFlags, Caps, CapsIntersectMode, ClockTime, CoreError, DebugCategory, ErrorMessage,
-  Event, EventView, FlowError, FlowSuccess, LoggableError, Message, PadDirection, PadPresence, PadTemplate, Pipeline,
+  Event, EventView, FlowError, FlowSuccess, LoggableError, Message, PadDirection, PadPresence,
+  PadTemplate, Pipeline,
 };
-use gstreamer_audio::{AudioCapsBuilder, AudioInfo, AudioLayout, AUDIO_FORMAT_S16, prelude::BaseTransformExtManual};
+use gstreamer_audio::{
+  prelude::BaseTransformExtManual, AudioCapsBuilder, AudioInfo, AudioLayout, AUDIO_FORMAT_S16,
+};
 use gstreamer_base::{
   subclass::{
     base_transform::{BaseTransformImpl, BaseTransformImplExt, GenerateOutputSuccess},
@@ -23,7 +40,9 @@ use gstreamer_base::{
 };
 use once_cell::sync::Lazy;
 use webrtc_vad::{Vad, VadMode};
-use whisper_rs::{convert_integer_to_float_audio, FullParams, SamplingStrategy, WhisperContext, WhisperState};
+use whisper_rs::{
+  convert_integer_to_float_audio, FullParams, SamplingStrategy, WhisperContext, WhisperState,
+};
 
 const SAMPLE_RATE: usize = 16_000;
 
@@ -94,10 +113,17 @@ impl WhisperFilter {
 
     let start = Instant::now();
     let samples = convert_integer_to_float_audio(&chunk.buffer);
-    gstreamer::debug!(CAT, "run_model(): sample conversion took {:?}", start.elapsed());
+    gstreamer::debug!(
+      CAT,
+      "run_model(): sample conversion took {:?}",
+      start.elapsed()
+    );
 
     let start = Instant::now();
-    state.whisper_state.full(self.whisper_params(), &samples).unwrap();
+    state
+      .whisper_state
+      .full(self.whisper_params(), &samples)
+      .unwrap();
     gstreamer::debug!(CAT, "run_model(): model took {:?}", start.elapsed());
 
     let n_segments = state.whisper_state.full_n_segments().unwrap();
@@ -115,24 +141,25 @@ impl WhisperFilter {
         .replace("[ Pause ]", "")
         .trim()
         .to_owned();
-      
+
       if !segment.is_empty() {
         let start_ts = state.whisper_state.full_get_segment_t0(0).unwrap();
         let end_ts = state.whisper_state.full_get_segment_t1(0).unwrap();
 
-        gstreamer::debug!(
-          CAT,
-          "run_model(): {} - {}: {}",
-          start_ts,
-          end_ts,
-          segment
-        );
+        gstreamer::debug!(CAT, "run_model(): {} - {}: {}", start_ts, end_ts, segment);
 
         let segment = format!("{}\n", segment);
         let mut buffer = Buffer::with_size(segment.len()).map_err(|_| FlowError::Error)?;
         let buffer_mut = buffer.get_mut().ok_or(FlowError::Error)?;
-        buffer_mut.set_pts(chunk.start_pts.checked_add(ClockTime::from_mseconds(start_ts as u64 * 10)).unwrap());
-        buffer_mut.set_duration(ClockTime::from_mseconds((end_ts as u64 - start_ts as u64) * 10));
+        buffer_mut.set_pts(
+          chunk
+            .start_pts
+            .checked_add(ClockTime::from_mseconds(start_ts as u64 * 10))
+            .unwrap(),
+        );
+        buffer_mut.set_duration(ClockTime::from_mseconds(
+          (end_ts as u64 - start_ts as u64) * 10,
+        ));
         buffer_mut
           .copy_from_slice(0, segment.as_bytes())
           .map_err(|_| FlowError::Error)?;
@@ -155,9 +182,10 @@ impl WhisperFilter {
 
 #[glib::object_subclass]
 impl ObjectSubclass for WhisperFilter {
-  const NAME: &'static str = "GstWhisperFilter";
-  type Type = super::WhisperFilter;
   type ParentType = BaseTransform;
+  type Type = super::WhisperFilter;
+
+  const NAME: &'static str = "GstWhisperFilter";
 
   fn new() -> Self {
     Self {
@@ -236,7 +264,10 @@ impl BaseTransformImpl for WhisperFilter {
       let voice_activity_detected = voice_activity_detected.clone();
       thread::spawn(move || {
         gstreamer::debug!(CAT, "vad starting");
-        let mut vad = Vad::new_with_rate_and_mode((SAMPLE_RATE as i32).try_into().unwrap(), VadMode::Aggressive);
+        let mut vad = Vad::new_with_rate_and_mode(
+          (SAMPLE_RATE as i32).try_into().unwrap(),
+          VadMode::Aggressive,
+        );
         while let Ok(next) = vad_receiver.recv() {
           let result = vad.is_voice_segment(&next).unwrap();
           gstreamer::debug!(CAT, "vad result: {}", result);
@@ -281,7 +312,8 @@ impl BaseTransformImpl for WhisperFilter {
     gstreamer::debug!(CAT, "transform_caps({:?})", direction);
     let mut caps = if direction == PadDirection::Src {
       SINK_CAPS.clone()
-    } else {
+    }
+    else {
       SRC_CAPS.clone()
     };
     if let Some(filter) = maybe_filter {
@@ -305,26 +337,24 @@ impl BaseTransformImpl for WhisperFilter {
         FlowError::NotNegotiated
       })?;
       gstreamer::debug!(CAT, "generate_output(): locked state");
-  
+
       let buffer_reader = buffer
         .as_ref()
         .map_readable()
         .map_err(|_| FlowError::Error)?;
-      let samples = buffer_reader
-        .as_slice_of()
-        .map_err(|_| FlowError::Error)?;
+      let samples = buffer_reader.as_slice_of().map_err(|_| FlowError::Error)?;
       gstreamer::debug!(CAT, "generate_output(): reading {} samples", samples.len());
 
       let buffer_len = samples.len();
       if buffer_len >= 160 {
         let vad_buffer = if buffer_len >= 480 {
-          &samples[buffer_len-480..buffer_len]
+          &samples[buffer_len - 480..buffer_len]
         }
         else if buffer_len >= 320 {
-          &samples[buffer_len-320..buffer_len]
+          &samples[buffer_len - 320..buffer_len]
         }
         else {
-          &samples[buffer_len-160..buffer_len]
+          &samples[buffer_len - 160..buffer_len]
         };
         state.vad_sender.send(vad_buffer.to_vec()).unwrap();
       }
@@ -337,8 +367,13 @@ impl BaseTransformImpl for WhisperFilter {
             buffer: state.prev_buffer.drain(..).collect(),
           });
         }
-        state.chunk.as_mut().unwrap().buffer.extend_from_slice(samples);
-  
+        state
+          .chunk
+          .as_mut()
+          .unwrap()
+          .buffer
+          .extend_from_slice(samples);
+
         gstreamer::debug!(CAT, "generate_output(): unlocked state");
         Ok(GenerateOutputSuccess::NoOutput)
       }
@@ -349,7 +384,11 @@ impl BaseTransformImpl for WhisperFilter {
           gstreamer::debug!(CAT, "generate_output(): voice activity ended");
           let maybe_buffer = self.run_model(state, chunk)?;
           gstreamer::debug!(CAT, "generate_output(): unlocked state");
-          Ok(maybe_buffer.map(GenerateOutputSuccess::Buffer).unwrap_or(GenerateOutputSuccess::NoOutput))
+          Ok(
+            maybe_buffer
+              .map(GenerateOutputSuccess::Buffer)
+              .unwrap_or(GenerateOutputSuccess::NoOutput),
+          )
         }
         else {
           gstreamer::debug!(CAT, "generate_output(): unlocked state");
