@@ -2,6 +2,8 @@
 name = "gst-whisper"
 version = "0.1.0"
 edition = "2021"
+license = "MIT/Apache-2.0"
+readme = "README.md"
 authors = ["Jasper Hugo <jasper@avstack.io>"]
 description = "A GStreamer filter that performs speech-to-text using Whisper"
 repository = "https://github.com/avstack/gst-whisper"
