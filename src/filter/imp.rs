@@ -12,6 +12,8 @@ use byte_slice_cast::AsSliceOf;
 use gstreamer::{
   element_imp_error,
   glib::{self, ParamSpec, Value},
+  param_spec::GstParamSpecBuilderExt,
+  prelude::{ParamSpecBuilderExt, ToValue},
   subclass::{
     prelude::{ElementImpl, GstObjectImpl, ObjectImpl, ObjectSubclass, ObjectSubclassExt},
     ElementMetadata,
@@ -34,6 +36,12 @@ use whisper_rs::{
 };
 
 const SAMPLE_RATE: usize = 16_000;
+
+const DEFAULT_VAD_MODE: &str = "quality";
+const DEFAULT_MIN_VOICE_ACTIVITY_MS: u64 = 200;
+const DEFAULT_LANGUAGE: &str = "en";
+const DEFAULT_TRANSLATE: bool = false;
+const DEFAULT_CONTEXT: bool = true;
 
 static WHISPER_CONTEXT: Lazy<WhisperContext> = Lazy::new(|| {
   let path = env::var("WHISPER_MODEL_PATH").unwrap();
@@ -60,8 +68,13 @@ static SINK_CAPS: Lazy<Caps> = Lazy::new(|| {
 static SRC_CAPS: Lazy<Caps> =
   Lazy::new(|| Caps::builder("text/x-raw").field("format", "utf8").build());
 
-#[derive(Debug, Clone, Default)]
-struct Settings {}
+struct Settings {
+  vad_mode: String,
+  min_voice_activity_ms: u64,
+  language: String,
+  translate: bool,
+  context: bool,
+}
 
 struct State {
   whisper_state: WhisperState<'static>,
@@ -90,9 +103,18 @@ impl WhisperFilter {
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
     params.set_single_segment(true);
-    params.set_language(Some("en"));
     params.set_suppress_blank(true);
-    params.set_no_speech_thold(0.3);
+    params.set_suppress_non_speech_tokens(true);
+    {
+      let settings = self.settings.lock().unwrap();
+      match settings.language.as_str() {
+        "en" => params.set_language(Some("en")),
+        "auto" => params.set_language(Some("auto")),
+        other => panic!("unsupported language: {}", other),
+      }
+      params.set_translate(settings.translate);
+      params.set_no_context(!settings.context);
+    }
     params
   }
 
@@ -125,6 +147,8 @@ impl WhisperFilter {
       if !segment.is_empty() {
         let start_ts = state.whisper_state.full_get_segment_t0(0).unwrap();
         let end_ts = state.whisper_state.full_get_segment_t1(0).unwrap();
+
+        gstreamer::info!(CAT, "{}", segment);
 
         let segment = format!("{}\n", segment);
         let mut buffer = Buffer::with_size(segment.len()).map_err(|_| FlowError::Error)?;
@@ -163,7 +187,13 @@ impl ObjectSubclass for WhisperFilter {
 
   fn new() -> Self {
     Self {
-      settings: Mutex::new(Default::default()),
+      settings: Mutex::new(Settings {
+        vad_mode: DEFAULT_VAD_MODE.into(),
+        min_voice_activity_ms: DEFAULT_MIN_VOICE_ACTIVITY_MS,
+        language: DEFAULT_LANGUAGE.into(),
+        translate: DEFAULT_TRANSLATE,
+        context: DEFAULT_CONTEXT,
+      }),
       state: Mutex::new(None),
     }
   }
@@ -171,19 +201,79 @@ impl ObjectSubclass for WhisperFilter {
 
 impl ObjectImpl for WhisperFilter {
   fn properties() -> &'static [ParamSpec] {
-    static PROPERTIES: Lazy<Vec<ParamSpec>> = Lazy::new(|| vec![]);
+    static PROPERTIES: Lazy<Vec<ParamSpec>> = Lazy::new(|| {
+      vec![
+      glib::ParamSpecString::builder("vad-mode")
+        .nick("VAD mode")
+        .blurb(&format!("The aggressiveness of voice detection. Defaults to '{}'. Other options are 'low-bitrate', 'aggressive' and 'very-aggressive'.", DEFAULT_VAD_MODE))
+        .mutable_ready()
+        .mutable_paused()
+        .mutable_playing()
+        .build(),
+      glib::ParamSpecInt::builder("min-voice-activity-ms")
+        .nick("Minimum voice activity")
+        .blurb(&format!("The minimum duration of voice that must be detected for the model to run, in milliseconds. Defaults to {}ms.", DEFAULT_MIN_VOICE_ACTIVITY_MS))
+        .mutable_ready()
+        .mutable_paused()
+        .mutable_playing()
+        .build(),
+      glib::ParamSpecString::builder("language")
+        .nick("Language")
+        .blurb(&format!("The target language. Defaults to '{}'. Specify 'auto' to use language detection.", DEFAULT_LANGUAGE))
+        .mutable_ready()
+        .mutable_paused()
+        .mutable_playing()
+        .build(),
+      glib::ParamSpecBoolean::builder("translate")
+        .nick("Translate")
+        .blurb(&format!("Whether to translate into the target language. Defaults to {}.", DEFAULT_TRANSLATE))
+        .mutable_ready()
+        .mutable_paused()
+        .mutable_playing()
+        .build(),
+      glib::ParamSpecBoolean::builder("context")
+        .nick("Context")
+        .blurb(&format!("Whether to use previous tokens as context for the model. Defaults to {}.", DEFAULT_CONTEXT))
+        .mutable_ready()
+        .mutable_paused()
+        .mutable_playing()
+        .build(),
+    ]
+    });
     PROPERTIES.as_ref()
   }
 
-  fn set_property(&self, _id: usize, _value: &Value, pspec: &ParamSpec) {
+  fn set_property(&self, _id: usize, value: &Value, pspec: &ParamSpec) {
+    let mut settings = self.settings.lock().unwrap();
     match pspec.name() {
-      _ => unimplemented!(),
+      "vad-mode" => {
+        settings.vad_mode = value.get().unwrap();
+      },
+      "min-voice-activity-ms" => {
+        settings.min_voice_activity_ms = value.get().unwrap();
+      },
+      "language" => {
+        settings.language = value.get().unwrap();
+      },
+      "translate" => {
+        settings.translate = value.get().unwrap();
+      },
+      "context" => {
+        settings.context = value.get().unwrap();
+      },
+      other => panic!("no such property: {}", other),
     }
   }
 
   fn property(&self, _id: usize, pspec: &ParamSpec) -> Value {
+    let settings = self.settings.lock().unwrap();
     match pspec.name() {
-      name => panic!("No getter for {name}"),
+      "vad-mode" => settings.vad_mode.to_value(),
+      "min-voice-activity-ms" => settings.min_voice_activity_ms.to_value(),
+      "language" => settings.language.to_value(),
+      "translate" => settings.translate.to_value(),
+      "context" => settings.context.to_value(),
+      other => panic!("no such property: {}", other),
     }
   }
 }
@@ -236,12 +326,17 @@ impl BaseTransformImpl for WhisperFilter {
     let (vad_sender, vad_receiver) = mpsc::channel::<Vec<i16>>();
     {
       let voice_activity_detected = voice_activity_detected.clone();
+      let vad_mode = match self.settings.lock().unwrap().vad_mode.as_str() {
+        "quality" => VadMode::Quality,
+        "low-bitrate" => VadMode::LowBitrate,
+        "aggressive" => VadMode::Aggressive,
+        "very-aggressive" => VadMode::VeryAggressive,
+        other => panic!("invalid VAD mode: {}", other),
+      };
       thread::spawn(move || {
         gstreamer::debug!(CAT, "vad starting");
-        let mut vad = Vad::new_with_rate_and_mode(
-          (SAMPLE_RATE as i32).try_into().unwrap(),
-          VadMode::Aggressive,
-        );
+        let mut vad =
+          Vad::new_with_rate_and_mode((SAMPLE_RATE as i32).try_into().unwrap(), vad_mode);
         while let Ok(next) = vad_receiver.recv() {
           let result = vad.is_voice_segment(&next).unwrap();
           gstreamer::debug!(CAT, "vad result: {}", result);
@@ -344,12 +439,23 @@ impl BaseTransformImpl for WhisperFilter {
 
         if let Some(chunk) = state.chunk.take() {
           gstreamer::debug!(CAT, "generate_output(): voice activity ended");
-          let maybe_buffer = self.run_model(state, chunk)?;
-          Ok(
-            maybe_buffer
-              .map(GenerateOutputSuccess::Buffer)
-              .unwrap_or(GenerateOutputSuccess::NoOutput),
-          )
+          let min_voice_activity_ms = self.settings.lock().unwrap().min_voice_activity_ms;
+          if (buffer.pts().unwrap() - chunk.start_pts).mseconds() >= min_voice_activity_ms {
+            let maybe_buffer = self.run_model(state, chunk)?;
+            Ok(
+              maybe_buffer
+                .map(GenerateOutputSuccess::Buffer)
+                .unwrap_or(GenerateOutputSuccess::NoOutput),
+            )
+          }
+          else {
+            gstreamer::debug!(
+              CAT,
+              "generate_output(): discarding voice activity < {}ms",
+              min_voice_activity_ms
+            );
+            Ok(GenerateOutputSuccess::NoOutput)
+          }
         }
         else {
           Ok(GenerateOutputSuccess::NoOutput)
