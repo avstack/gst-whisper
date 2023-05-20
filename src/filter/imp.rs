@@ -132,41 +132,43 @@ impl WhisperFilter {
     if n_segments > 0 {
       assert!(n_segments == 1);
 
-      let segment = state
-        .whisper_state
-        .full_get_segment_text(0)
-        .unwrap()
-        .replace("[BLANK_AUDIO]", "")
-        .replace("[ Silence ]", "")
-        .replace("[silence]", "")
-        .replace("(silence)", "")
-        .replace("[ Pause ]", "")
-        .trim()
-        .to_owned();
+      if let Ok(segment) = state.whisper_state.full_get_segment_text(0) {
+        let segment = segment
+          .replace("[BLANK_AUDIO]", "")
+          .replace("[ Silence ]", "")
+          .replace("[silence]", "")
+          .replace("(silence)", "")
+          .replace("[ Pause ]", "")
+          .trim()
+          .to_owned();
 
-      if !segment.is_empty() {
-        let start_ts = state.whisper_state.full_get_segment_t0(0).unwrap();
-        let end_ts = state.whisper_state.full_get_segment_t1(0).unwrap();
+        if !segment.is_empty() {
+          let start_ts = state.whisper_state.full_get_segment_t0(0).unwrap();
+          let end_ts = state.whisper_state.full_get_segment_t1(0).unwrap();
 
-        gstreamer::info!(CAT, "{}", segment);
+          gstreamer::info!(CAT, "{}", segment);
 
-        let segment = format!("{}\n", segment);
-        let mut buffer = Buffer::with_size(segment.len()).map_err(|_| FlowError::Error)?;
-        let buffer_mut = buffer.get_mut().ok_or(FlowError::Error)?;
-        buffer_mut.set_pts(
-          chunk
-            .start_pts
-            .checked_add(ClockTime::from_mseconds(start_ts as u64 * 10))
-            .unwrap(),
-        );
-        buffer_mut.set_duration(ClockTime::from_mseconds(
-          (end_ts as u64 - start_ts as u64) * 10,
-        ));
-        buffer_mut
-          .copy_from_slice(0, segment.as_bytes())
-          .map_err(|_| FlowError::Error)?;
+          let segment = format!("{}\n", segment);
+          let mut buffer = Buffer::with_size(segment.len()).map_err(|_| FlowError::Error)?;
+          let buffer_mut = buffer.get_mut().ok_or(FlowError::Error)?;
+          buffer_mut.set_pts(
+            chunk
+              .start_pts
+              .checked_add(ClockTime::from_mseconds(start_ts as u64 * 10))
+              .unwrap(),
+          );
+          buffer_mut.set_duration(ClockTime::from_mseconds(
+            (end_ts as u64 - start_ts as u64) * 10,
+          ));
+          buffer_mut
+            .copy_from_slice(0, segment.as_bytes())
+            .map_err(|_| FlowError::Error)?;
 
-        Ok(Some(buffer))
+          Ok(Some(buffer))
+        }
+        else {
+          Ok(None)
+        }
       }
       else {
         Ok(None)
