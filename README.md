@@ -2,7 +2,21 @@
 
 Accepts 16kHz S16 audio buffers on its sink pad and produces text buffers on its source pad.
 
-Example usage:
+## Installation
+
+gst-whisper is written in Rust and uses the cargo-c helper. Set up a Rust development environment (e.g. using [rustup](https://rustup.rs)) and then:
+
+```
+cargo install cargo-c
+
+git clone https://github.com/avstack/gst-whisper
+cd gst-whisper
+cargo cinstall
+```
+
+## Example usage
+
+You must already have the Whisper model.
 
 ```
 WHISPER_MODEL_PATH=../whisper.cpp/models/ggml-base.en.bin gst-launch-1.0 --no-position autoaudiosrc ! audioconvert ! audioresample ! queue ! whisper ! fdsink
