@@ -11,7 +11,8 @@ cargo install cargo-c
 
 git clone https://github.com/avstack/gst-whisper
 cd gst-whisper
-cargo cinstall
+cargo cbuild --release
+export GST_PLUGIN_PATH=$(pwd)/target/release
 ```
 
 ## Example usage
@@ -19,7 +20,9 @@ cargo cinstall
 You must already have the Whisper model.
 
 ```
-WHISPER_MODEL_PATH=../whisper.cpp/models/ggml-base.en.bin gst-launch-1.0 --no-position autoaudiosrc ! audioconvert ! audioresample ! queue ! whisper ! fdsink
+export WHISPER_MODEL_PATH=../whisper.cpp/models/ggml-base.en.bin
+
+gst-launch-1.0 --no-position autoaudiosrc ! audioconvert ! audioresample ! queue ! whisper ! fdsink
 ```
 
 ## License

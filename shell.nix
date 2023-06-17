@@ -15,4 +15,8 @@ mkShell {
   ] ++ (if stdenv.isDarwin then [
     darwin.apple_sdk.frameworks.Accelerate
   ] else []);
+
+  shellHook = ''
+    export HISTFILE="$HOME/.local/log/bash_history/gst-whisper";
+  '';
 }
